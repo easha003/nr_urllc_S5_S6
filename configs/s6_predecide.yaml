@@ -3,44 +3,37 @@ hybrid:
   K_total: 2
   dup_split: [1, 1]
 
-  # ↓ Lower the duplication gate so DUP can trigger at mid SNRs
-  p_gate: 0.85          # was 0.97
-
+  p_gate: 0.60          # Moderate gate
   allow_switch: true
-  # ↓ Soften the “stickiness” so it can switch back sooner
-  hysteresis_margin_prob: 0.02   # was 0.05
+  hysteresis_margin_prob: 0.0
+  conf_k: -0.1           # Small safety margin
+  epsilon: 0.20         # Moderate exploration
 
-  # ↓ Soften the safety margin so idle link isn’t over-penalized
-  conf_k: 0.3           # was 1.0
-
-  # ↓ Small, controlled exploration of the other link
-  epsilon: 0.05         # NEW (3% ε-greedy)
-
-  # ↓ Keep the idle link’s estimate fresh (periodic probing)
-  probe:                # NEW
-    period: 8           # measure both links every 8 steps
-    r_probe: 1.5        # probing uses a noisier measurement
-    on_switch: true     # also probe the link we didn’t choose whenever we switch
+  probe:
+    period: 3
+    r_probe: 0.5
+    on_switch: true
 
 predictor:
-  # ↓ Make SNR forecasts mean-reverting instead of drifting to 0
-  model: ar1_per_link  # NEW! Use per-link dynamics
+  model: ar1_per_link
   rf:
-    phi: 0.94     # Slower fading
-    q: 0.3        # Lower process noise
-    m: 8.0        # Lower mean SNR         
+    phi: 0.94
+    q: 0.3
+    m: 8.0
   vlc:
-    phi: 0.82     # Faster fading  
-    q: 1.2        # Higher process noise
-    m: 12.0       # Higher mean SNR (when not blocked)
-  # Shared measurement noise (applies to both links)
-  r: 0.5  
+    phi: 0.90
+    q: 0.6
+    m: 12.5
+    # ✅ NEW: Blockage handling
+    blockage_threshold: -15.0      # Detect blockage below -10 dB
+    blockage_recovery_rate: 0.5    # Fast recovery toward mean
+  
+  r: 0.3
 
-  # Keep your existing priors (used as initial posteriors at t=0)
   mu_rf: 8.0
-  var_rf: 4.0
-  mu_vlc: 12.0
-  var_vlc: 4.0
+  var_rf: 3.0
+  mu_vlc: 12.5
+  var_vlc: 3.0
 
 adapters:
   rf_lut: artifacts/adapters/rf_lut.json

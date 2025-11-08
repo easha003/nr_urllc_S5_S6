@@ -90,23 +90,25 @@ class AR1MeanReverting:
 # --- END PATCH ---
 
 
-# --- PATCH: Per-link mean-reverting AR(1) predictor ---
+# --- PATCH: Per-link mean-reverting AR(1) predictor with blockage handling ---
 @dataclass
 class AR1MeanRevertingPerLink:
     """
     Mean-reverting AR(1) with different dynamics per link.
     RF: Slow fading, low noise (stable)
     VLC: Fast fading, high noise (volatile)
+    
+    ✅ ENHANCEMENT: Blockage detection and fast recovery
     """
     # RF state-space & noise
-    phi_rf: float = 0.94      # Slower fading
-    q_rf: float = 0.3         # Less process noise
-    m_rf: float = 8.0         # Lower mean SNR
+    phi_rf: float = 0.94
+    q_rf: float = 0.3
+    m_rf: float = 8.0
     
     # VLC state-space & noise  
-    phi_vlc: float = 0.82     # Faster fading
-    q_vlc: float = 1.2        # More process noise
-    m_vlc: float = 12.0       # Higher mean SNR
+    phi_vlc: float = 0.82
+    q_vlc: float = 1.2
+    m_vlc: float = 12.0
     
     # Shared measurement noise
     r: float = 0.5
@@ -116,12 +118,16 @@ class AR1MeanRevertingPerLink:
     var_rf: float = 4.0
     mu_vlc: float = 12.0
     var_vlc: float = 4.0
+    
+    # ✅ NEW: Blockage detection
+    blockage_threshold: float = -10.0  # SNR below this = likely blocked
+    blockage_recovery_rate: float = 0.3  # How fast to recover toward m_vlc
 
     def update(self, snr_rf_meas: float | None, snr_vlc_meas: float | None) -> None:
         """
-        Kalman-like predict→update for both links with per-link dynamics.
+        Kalman-like predict→update for both links with VLC blockage handling.
         """
-        # RF update
+        # RF update (standard)
         mu_rf_pred = self.m_rf + self.phi_rf * (self.mu_rf - self.m_rf)
         var_rf_pred = (self.phi_rf ** 2) * self.var_rf + self.q_rf
         
@@ -133,15 +139,26 @@ class AR1MeanRevertingPerLink:
             self.mu_rf = mu_rf_pred
             self.var_rf = var_rf_pred
         
-        # VLC update (different dynamics)
+        # ✅ VLC update with blockage detection
         mu_vlc_pred = self.m_vlc + self.phi_vlc * (self.mu_vlc - self.m_vlc)
         var_vlc_pred = (self.phi_vlc ** 2) * self.var_vlc + self.q_vlc
         
         if snr_vlc_meas is not None:
-            K_vlc = var_vlc_pred / (var_vlc_pred + self.r)
-            self.mu_vlc = mu_vlc_pred + K_vlc * (snr_vlc_meas - mu_vlc_pred)
-            self.var_vlc = (1.0 - K_vlc) * var_vlc_pred
+            # ✅ Detect blockage
+            if snr_vlc_meas < self.blockage_threshold:
+                # Blockage detected! Don't fully trust this measurement
+                # Instead, do a weighted update toward the mean
+                self.mu_vlc = (1 - self.blockage_recovery_rate) * mu_vlc_pred + \
+                              self.blockage_recovery_rate * self.m_vlc
+                # Keep variance higher during blockage
+                self.var_vlc = min(var_vlc_pred * 1.5, 10.0)
+            else:
+                # Normal update
+                K_vlc = var_vlc_pred / (var_vlc_pred + self.r)
+                self.mu_vlc = mu_vlc_pred + K_vlc * (snr_vlc_meas - mu_vlc_pred)
+                self.var_vlc = (1.0 - K_vlc) * var_vlc_pred
         else:
+            # No measurement - just predict
             self.mu_vlc = mu_vlc_pred
             self.var_vlc = var_vlc_pred
 
@@ -187,6 +204,10 @@ def make_predictor(cfg):
             
             # Shared measurement noise
             r=float(px.get("r", 0.5)),
+            
+            # ✅ NEW: Blockage handling parameters
+            blockage_threshold=float(vlc_cfg.get("blockage_threshold", -10.0)),
+            blockage_recovery_rate=float(vlc_cfg.get("blockage_recovery_rate", 0.3)),
         )
     
     # Unified mean-reverting model (same dynamics for both links)
